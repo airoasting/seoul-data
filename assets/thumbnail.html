@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>seoul-data 썸네일</title>
+<!--
+  README 썸네일 원본 (1200x630). PNG로 뽑는 법:
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --hide-scrollbars \
+    --force-device-scale-factor=2 --window-size=1200,630 --screenshot=assets/thumbnail.png assets/thumbnail.html
+
+  화면의 숫자는 모두 2026-11-14 실제 응답이다. 바꿀 때는 실제 응답으로만 바꾼다.
+  - 광화문·덕수궁: place_now, 20:45 기준 (혼잡도 여유, 추정 인구 14,000~16,000명, 11℃ 비, 도로 19km/h 서행, 12시간 예측)
+  - 마포구 아파트: dataset_query OA-21275, RCPT_YR=2026, CGG_NM=마포구, 아파트, 취소 거래 제외 (1,611건, 평균 147,964만원, 중앙값 145,000만원)
+-->
+<style>
+  :root { --ink:#0E1A24; --paper:#F4EFE6; --river:#1F6F8B; --river-soft:#CFE3EA; --sun:#E9A23B; --line:#D9D0C1; --mute:#6B7780; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:1200px; height:630px; overflow:hidden; }
+  body { font-family:-apple-system,'Apple SD Gothic Neo','Pretendard','Noto Sans KR',sans-serif; background:var(--paper); color:var(--ink); -webkit-font-smoothing:antialiased; }
+
+  .sheet { display:grid; grid-template-columns:560px 1fr; height:100%; }
+
+  /* 왼쪽: 묻는 쪽 */
+  .ask { padding:54px 0 0 64px; position:relative; }
+  .tag { font-size:14px; font-weight:700; letter-spacing:.4px; color:var(--river); }
+  .tag i { font-style:normal; color:var(--mute); font-weight:600; }
+  h1 { margin-top:20px; font-size:54px; line-height:1.16; letter-spacing:-2.4px; font-weight:800; }
+  h1 em { font-style:normal; color:var(--river); }
+  .bubbles { margin-top:34px; display:flex; flex-direction:column; gap:12px; align-items:flex-start; }
+  .q { font-size:22px; font-weight:700; letter-spacing:-.6px; padding:13px 22px; border-radius:22px 22px 22px 6px; background:var(--ink); color:var(--paper); }
+  .q.b { background:#fff; color:var(--ink); border:1.5px solid var(--ink); margin-left:34px; }
+  .q.c { background:#fff; color:var(--ink); border:1.5px solid var(--line); margin-left:68px; }
+  .foot { position:absolute; left:64px; bottom:40px; font-size:15px; font-weight:600; color:var(--mute); line-height:1.6; }
+  .foot b { color:var(--ink); font-weight:800; }
+
+  /* 오른쪽: 답하는 쪽 */
+  .answer { background:var(--ink); color:var(--paper); padding:46px 56px 0 52px; position:relative; }
+  .answer::before { content:""; position:absolute; left:0; top:0; bottom:0; width:6px; background:linear-gradient(var(--river), var(--sun)); }
+  .src { font-family:'SF Mono',ui-monospace,Menlo,monospace; font-size:13px; color:#8FA3AE; }
+  .src b { color:var(--sun); font-weight:600; }
+  .place { margin-top:14px; display:flex; align-items:baseline; gap:14px; }
+  .place h2 { font-size:34px; font-weight:800; letter-spacing:-1.2px; }
+  .level { font-size:15px; font-weight:800; color:var(--ink); background:#9ED8B4; padding:4px 13px; border-radius:999px; position:relative; top:-5px; }
+  .big { margin-top:20px; display:flex; align-items:flex-end; gap:12px; }
+  .big .n { font-size:66px; font-weight:800; letter-spacing:-3px; line-height:.9; }
+  .big .u { font-size:18px; font-weight:700; color:#B9C6CE; padding-bottom:6px; line-height:1.35; }
+  .facts { margin-top:22px; display:flex; gap:26px; font-size:17px; font-weight:700; }
+  .facts span i { font-style:normal; font-weight:600; color:#8FA3AE; margin-right:7px; font-size:14px; }
+  .facts .warn { color:var(--sun); }
+  .chart { margin-top:24px; }
+  .chart p { font-size:12.5px; font-weight:600; color:#8FA3AE; margin-bottom:9px; }
+  .cols { display:flex; align-items:flex-end; gap:6px; height:112px; border-bottom:1px solid #2B3B47; }
+  .cols div { flex:1; background:var(--river); border-radius:3px 3px 0 0; }
+  .cols div:first-child { background:var(--sun); }
+  .hours { display:flex; gap:6px; margin-top:6px; }
+  .hours span { flex:1; text-align:center; font-size:10.5px; color:#6F828D; font-weight:600; }
+  .second { position:absolute; left:52px; right:56px; bottom:36px; padding-top:16px; border-top:1px solid #2B3B47; }
+  .second .src { margin-bottom:7px; }
+  .second p { font-size:19px; font-weight:700; letter-spacing:-.5px; }
+  .second p b { color:var(--sun); }
+  .second p small { font-size:13.5px; font-weight:600; color:#8FA3AE; margin-left:6px; }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <section class="ask">
+    <div class="tag">seoul-data <i>· 서울 열린데이터광장 MCP 서버</i></div>
+    <h1>서울이 지금 어떤지,<br><em>Claude에게</em> 그냥<br>물어보세요.</h1>
+    <div class="bubbles">
+      <div class="q">지금 덕수궁 붐벼?</div>
+      <div class="q b">마포구 아파트 올해 평균 얼마야?</div>
+      <div class="q c">여의나루 따릉이 남았어?</div>
+    </div>
+    <div class="foot">서울시 Open API <b>5,891개</b>를 도구 <b>7개</b>로 · 추가 패키지 없이 파이썬만</div>
+  </section>
+
+  <section class="answer">
+    <div class="src"><b>place_now</b> · 2026-11-14 20:45 기준 · 서울 열린데이터광장</div>
+    <div class="place"><h2>광화문·덕수궁</h2><span class="level">여유</span></div>
+    <div class="big"><div class="n">1.4~1.6만</div><div class="u">명<br>추정 인구</div></div>
+    <div class="facts">
+      <span><i>기온</i>11℃ · 비</span>
+      <span class="warn"><i>도로</i>19km/h 서행</span>
+    </div>
+    <div class="chart">
+      <p>앞으로 12시간 인구 예측</p>
+      <div class="cols">
+        <div style="height:100%"></div><div style="height:87.5%"></div><div style="height:56.3%"></div><div style="height:37.5%"></div>
+        <div style="height:28.1%"></div><div style="height:21.9%"></div><div style="height:18.8%"></div><div style="height:18.8%"></div>
+        <div style="height:18.8%"></div><div style="height:21.9%"></div><div style="height:21.9%"></div><div style="height:31.3%"></div><div style="height:56.3%"></div>
+      </div>
+      <div class="hours"><span>지금</span><span>22</span><span>23</span><span>00</span><span>01</span><span>02</span><span>03</span><span>04</span><span>05</span><span>06</span><span>07</span><span>08</span><span>09시</span></div>
+    </div>
+    <div class="second">
+      <div class="src"><b>dataset_query</b> · 2026년 접수분 · 취소 거래 제외</div>
+      <p>마포구 아파트 매매 <b>1,611건</b>, 평균 <b>14.8억</b> · 중앙값 14.5억<small>전체를 다 훑음</small></p>
+    </div>
+  </section>
+</div>
+</body>
+</html>
