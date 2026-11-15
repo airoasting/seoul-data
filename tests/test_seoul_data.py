@@ -482,7 +482,7 @@ class QueryTest(Base):
         b = self.ok("dataset_query", dataset="OA-21275", metrics=["count"], scan=1000)
         self.assertFalse(b["meta"]["scan_complete"])
         self.assertEqual((b["meta"]["next_scan_offset"], b["rows"][0]["count"]), (1000, 1000))
-        self.assertTrue(any("전체 1,200건 중 1~1,000번째" in n and "scan_offset=1000" in n for n in b["notices"]), b["notices"])
+        self.assertTrue(any("전체 1,200건 중 1~1,000번째" in n and "scan_offset을 1000(으)로" in n for n in b["notices"]), b["notices"])
         rest = self.ok("dataset_query", dataset="OA-21275", metrics=["count"], scan=1000, scan_offset=1000)
         self.assertEqual(rest["rows"][0]["count"], 200)                 # 이어 훑으면 나머지가 온다
         self.assertFalse(rest["meta"]["scan_complete"])                 # 앞을 건너뛴 호출은 '다 봤다'고 하지 않는다
@@ -644,13 +644,15 @@ class PlaceTest(Base):
 class SubwayTest(Base):
     def setUp(self) -> None:
         super().setUp()
-        self.api.handlers["realtimeStationArrival"] = lambda s, e, p: fx("subway_arrival.json") if p == ["서울"] else fx("subway_error.json")
+        self.api.handlers["realtimeStationArrival"] = lambda s, e, p: (
+            fx("subway_arrival.json") if p == ["서울"] else fx("info200.json") if p == ["서울역"] else fx("subway_error.json"))
         m.age_sec = lambda stamp: 30                    # 픽스처는 오래전 시각이다. 방금 갱신된 것으로 본다
 
     def test_station_name_and_fields(self) -> None:
         b = self.ok("subway_arrivals", station="서울역")
-        self.assertEqual(b["meta"]["station"], "서울")
-        self.assertIn(f"/api/subway/{SUBKEY}/json/realtimeStationArrival/0/50/", self.api.calls[-1])   # 전용 키, 0부터
+        self.assertEqual(b["meta"]["station"], "서울 + 서울역")                     # 1·4호선은 '서울', GTX-A는 '서울역'으로 나뉘어 있다
+        self.assertTrue(any(f"/api/subway/{SUBKEY}/json/realtimeStationArrival/0/50/%EC%84%9C%EC%9A%B8%EC%97%AD" in u
+                            for u in self.api.calls))                                # 전용 키, 0부터, 두 이름 모두
         row = b["rows"][0]
         self.assertTrue({"line", "direction", "heading", "status", "updated", "age_sec"} <= set(row))
         self.assertTrue(row["line"].endswith("선"))
@@ -674,7 +676,7 @@ class SubwayTest(Base):
     def test_cached_for_15s(self) -> None:
         self.ok("subway_arrivals", station="서울")
         self.ok("subway_arrivals", station="서울", line="1호선")
-        self.assertEqual(len(self.api.calls), 1)                                   # 하루 1,000건 한도를 아낀다
+        self.assertEqual(len(self.api.calls), 2)                                   # 서울, 서울역 한 번씩. 두 번째 질문은 캐시에서
 
     def test_unknown_station(self) -> None:
         b = self.bad("subway_arrivals", "ERROR-336", station="없는역")              # 역 이름 오류라고 단정하지 않는다
@@ -931,15 +933,34 @@ class SubwayMoreTest(Base):
         self.assertEqual(got(direction="신도림"), [("2호선", "외선", 60)])            # 행선지로도 좁힌다
         self.assertTrue(self.ok("subway_arrivals", station="강남", line="신분당선")["rows"][0]["last_train"])
 
-    def test_trains_not_updated_for_5_minutes_are_dropped(self) -> None:
+    def test_stale_trains_are_marked_not_dropped(self) -> None:
+        """종착역에서 대기하는 열차도 오래 갱신되지 않는다. 지우지 않고 표시해 뒤로 보낸다."""
         m.age_sec = lambda stamp: 400 if stamp.endswith(":10") else 30           # 신분당선 행만 오래됐다
         b = self.ok("subway_arrivals", station="강남")
-        self.assertEqual({r["line"] for r in b["rows"]}, {"2호선"})
-        self.assertTrue(any("1건은 이미 지나간 열차일 수 있어 뺐습니다" in n for n in b["notices"]))
+        sb = [r for r in b["rows"] if r["line"] == "신분당선"]
+        self.assertTrue(sb and sb[0]["stale"])
+        self.assertTrue(any("1건은 갱신된 지 90초가 넘어" in n for n in b["notices"]))
+
+    def test_arriving_train_comes_first_and_eta_now(self) -> None:
+        rows = [{"subwayId": "1004", "updnLine": "하행", "trainLineNm": "오이도행 - 신용산방면", "arvlMsg2": "7분 30초 후", "arvlMsg3": "동대문",
+                 "barvlDt": "450", "ordkey": "12004오이도0", "recptnDt": "2026-11-15 08:54:30", "lstcarAt": "0"},
+                {"subwayId": "1004", "updnLine": "하행", "trainLineNm": "사당행 - 신용산방면", "arvlMsg2": "서울 진입", "arvlMsg3": "서울",
+                 "barvlDt": "0", "ordkey": "11000사당0", "recptnDt": "2026-11-15 08:54:30", "lstcarAt": "0"},
+                {"subwayId": "1004", "updnLine": "하행", "trainLineNm": "사당행 - 신용산방면", "arvlMsg2": "전역 도착", "arvlMsg3": "회현",
+                 "barvlDt": "120", "ordkey": "11001사당0", "recptnDt": "2026-11-15 08:54:30", "lstcarAt": "1"}]
+        body = json.dumps({"errorMessage": {"status": 200, "code": "INFO-000", "message": "정상", "total": 3},
+                           "realtimeArrivalList": rows}, ensure_ascii=False).encode()
+        self.api.handlers["realtimeStationArrival"] = lambda s, e, p: body
+        b = self.ok("subway_arrivals", station="강남", limit=2)
+        self.assertEqual([r["status"] for r in b["rows"]], ["서울 진입", "전역 도착"])   # 들어오는 열차가 맨 앞, 7분 뒤 열차는 잘린다
+        self.assertEqual(b["rows"][1]["eta_now_sec"], 90)                             # 120초 - 갱신 뒤 30초
+        self.assertTrue(any("3건 중 가까운 2건만" in n for n in b["notices"]))
+        self.assertTrue(any("막차" in n for n in b["notices"]))
 
     def test_filter_that_matches_nothing_says_so(self) -> None:
         b = self.ok("subway_arrivals", station="강남", line="9호선")
         self.assertEqual(b["rows"], [])
+        self.assertTrue(any("지금 이 역에 있는 것: 2호선(" in n and "신분당선(" in n for n in b["notices"]), b["notices"])
         self.assertTrue(any("4건 중 line, direction 조건에 맞는 열차가 없습니다" in n for n in b["notices"]))
 
     def test_empty_answer_mentions_the_station_name(self) -> None:
@@ -968,6 +989,67 @@ class SubwayMoreTest(Base):
         self.assertTrue(b["error"]["message"].startswith("일반 인증키는 들어 있습니다"))   # '체험 모드'라고 하지 않는다
         self.assertTrue(b["error"]["next"].startswith("일반 인증키만 있다면 place_now"))   # 되는 길을 먼저 알려 준다
         self.assertEqual(self.api.calls, [])
+
+
+class SubwayNamesTest(Base):
+    def setUp(self) -> None:
+        super().setUp()
+        self.seen = []
+        self.api.handlers["realtimeStationArrival"] = lambda s, e, p: self.seen.append(p[0]) or (
+            fx("subway_arrival.json") if p[0] in ("천호(풍납토성)", "군자(능동)") else fx("info200.json"))
+
+    def test_bracketed_station_names(self) -> None:
+        """API는 '천호'에 빈 결과를 주고 '천호(풍납토성)'에만 답한다. 괄호 앞부분으로도 찾게 한다."""
+        b = self.ok("subway_arrivals", station="천호역")
+        self.assertEqual(self.seen, ["천호(풍납토성)"])
+        self.assertTrue(b["rows"])
+        self.assertIn("천호(풍납토성)", b["meta"]["station_note"])
+        self.ok("subway_arrivals", station="군자")
+        self.assertEqual(self.seen[-1], "군자(능동)")
+
+    def test_unknown_name_gets_suggestions(self) -> None:
+        b = self.ok("subway_arrivals", station="고터")
+        self.assertTrue(any("비슷한 이름: 고속터미널" in n for n in b["notices"]), b["notices"])
+
+    def test_line_names(self) -> None:
+        self.assertEqual(m._line_target("2"), "2호선")
+        self.assertEqual(m._line_target("분당선"), "수인분당선")
+        self.assertEqual(m._line_target("신분당선"), "신분당선")
+
+
+class SubwayCountTest(Base):
+    def test_every_real_request_is_counted_once(self) -> None:
+        self.api.handlers["realtimeStationArrival"] = lambda s, e, p: fx("info200.json")
+        before = sc.count_subway()
+        self.ok("subway_arrivals", station="강남")
+        self.ok("subway_arrivals", station="강남")                                 # 캐시 적중은 세지 않는다
+        self.ok("subway_arrivals", station="서울")                                 # 서울 + 서울역 두 번
+        self.assertEqual(sc.count_subway() - before, 3)
+
+    def test_describe_does_not_spend_subway_calls(self) -> None:
+        self.assertIsNone(m._sample_row({"service": "realtimePosition", "host": "subway", "first_index": 0, "params": []}))
+        self.assertFalse(any("swopenapi" in u for u in self.api.calls))
+
+
+class SubwayDatasetQueryTest(Base):
+    def setUp(self) -> None:
+        super().setUp()
+        trains = [{"subwayNm": "2호선" if i % 2 else "3호선", "statnNm": f"역{i}", "trainNo": str(i)} for i in range(76)]
+        self.trains = trains
+        self.api.handlers["realtimePosition"] = lambda s, e, p: json.dumps(
+            {"errorMessage": {"status": 200, "code": "INFO-000", "message": "정상", "total": len(trains)},
+             "realtimePositionList": trains[max(s, 1) - 1:e]}, ensure_ascii=False).encode()
+
+    def test_service_name_goes_to_the_subway_host_with_correct_window(self) -> None:
+        b = self.ok("dataset_query", service="realtimePosition", path_args=["2호선"], offset=5, limit=6)
+        self.assertTrue(any("swopenapi" in u and "/realtimePosition/6/11/" in u for u in self.api.calls), self.api.calls)
+        self.assertEqual([r["trainNo"] for r in b["rows"]], [str(i) for i in range(5, 11)])
+        self.assertEqual((b["meta"]["total"], b["meta"]["next_offset"]), (76, 11))
+
+    def test_where_and_aggregation_are_applied_on_subway_data(self) -> None:
+        b = self.ok("dataset_query", service="realtimePosition", path_args=["2호선"], where=["subwayNm=2호선"], metrics=["count"])
+        self.assertEqual(b["rows"][0]["count"], 38)                                 # 조건을 조용히 버리지 않는다
+        self.assertTrue(b["meta"]["scan_complete"])
 
 
 class SampleSubwayTest(SampleBase):

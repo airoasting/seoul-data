@@ -32,10 +32,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import catalog                                                   # noqa: E402
 import places                                                    # noqa: E402
+import stations                                                  # noqa: E402
 import seoul_client as sc                                        # noqa: E402
 from seoul_client import SeoulError                              # noqa: E402
 
-SERVER = {"name": "seoul-data", "version": "0.1.0"}
+SERVER = {"name": "seoul-data", "version": "0.1.1"}
 PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 MAX_CHARS = 40_000     # 응답 JSON 글자 수 상한. 클라이언트가 큰 응답을 자르기 전에 서버가 먼저 줄이고 알리려는 값이다.
                        # dart 서버에서 써 온 경험값이고, 4만 자가 몇 토큰인지는 재지 않았다.
@@ -237,6 +238,8 @@ def _example(spec: dict) -> dict:
 
 def _sample_row(spec: dict) -> dict | None:
     """실제 행 하나. 코드 필드에 어떤 값이 들어 있는지(영업상태 '영업/정상' 등) 명세만으로는 알 수 없어서 싣는다."""
+    if spec["host"] == "subway":                          # 지하철 서버는 하루 1,000건 한도가 있다. 예시 행 때문에 쓰지 않는다
+        return None
     try:
         args = _example(spec)["arguments"].get("filters") or {}
         c = client()
@@ -273,6 +276,8 @@ def dataset_describe(a: dict) -> dict:
 
 
 # ── dataset_query ──────────────────────────────────────────────────────────
+
+SUBWAY_SERVICES = {"realtimeposition", "realtimestationarrival", "realtimestationarrival/all"}   # 지하철 서버로 가는 서비스
 
 # 범용 도구로 부르면 체험 모드 확인과 크기 줄이기를 건너뛰게 되는 서비스. 전용 도구로 돌려보낸다.
 DEDICATED = {"citydata": ("place_now", '{"place": "광화문·덕수궁"}'), "citydata_ppltn": ("place_now", '{"place": "광화문·덕수궁", "sections": ["population"]}'),
@@ -324,7 +329,7 @@ _DATE_SHAPES = (re.compile(r"^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])(?:-(?:0[1-9]|[12]
                 re.compile(r"^(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:(?:0[1-9]|[12]\d|3[01])(?:\d{4}(?:\d{2})?)?)?$"))  # 202611, 20261114, 202611142000
 
 
-_DATE_LOOSE = re.compile(r"^((?:19|20)\d{2})[-./](\d{1,2})(?:[-./](\d{1,2}))?((?:[ T].*)?)$")
+_DATE_LOOSE = re.compile(r"^((?:19|20)\d{2})\s*[-./]\s*(\d{1,2})(?:\s*[-./]\s*(\d{1,2}))?\.?((?:[ T].*)?)$")
 
 
 def _date_digits(text: str) -> str | None:
@@ -426,7 +431,9 @@ def dataset_query(a: dict) -> dict:
             raise ToolError("BAD_INPUT", "filters는 dataset(OA-번호)과 함께만 쓸 수 있습니다.",
                             "service를 직접 줄 때는 path_args에 인자를 순서대로 넣으세요.")
         params = list(path_args)
-    hit = _dedicated(service)
+        if service.lower() in SUBWAY_SERVICES:   # 서비스명만 줘도 지하철 서비스는 지하철 서버로 보낸다
+            spec = {"service": service, "host": "subway", "first_index": 0, "params": [], "source_url": None}
+    hit = _dedicated(service.split("/")[0])
     if hit:
         raise ToolError("USE_TOOL", f"이 데이터({service})는 dataset_query가 아니라 {hit[0]} 도구로 봐야 합니다.",
                         f"{hit[0]} {hit[1]} 처럼 부르세요. 그 도구가 장소·역 이름을 맞추고, 체험 모드에서 다른 대상의 데이터가 "
@@ -448,14 +455,18 @@ def dataset_query(a: dict) -> dict:
     key_mode = c.subway_key_mode if subway else c.key_mode
     meta: dict = {"dataset": dataset or None, "service": service}
 
-    if subway:                                   # 호스트, 키, 시작 위치가 다르다. 한 장만 받는다
-        first = spec["first_index"]              # type: ignore[index]
-        n = sc.SAMPLE_MAX if key_mode == "sample" else limit
-        page = c.call(service, first + offset, first + offset + n, params, subway=True)
-        _count_subway()
-        got = {"total": page.total or len(page.rows), "rows": page.rows,
-               "sample_capped": key_mode == "sample" and limit > n, "partial": False, "ended": True}
-        scanning = False
+    if subway:                                   # 호스트와 키가 다르다. 한 장(최대 1,000행)만 받는다
+        # 실측: /0/N과 /1/N이 같은 1~N행을 준다. 그래서 offset+1부터 offset+limit까지를 부른다
+        want = sc.PAGE_MAX if scanning else (sc.SAMPLE_MAX if key_mode == "sample" else limit)
+        start = 1 if scanning else offset + 1
+        if key_mode == "sample" and (scanning or offset):
+            raise ToolError("SAMPLE_LIMIT", "실시간 지하철 인증키가 없어 처음 5행만 볼 수 있습니다.", KEY_NEXT)
+        page = c.call(service, start, start + want - 1, params, subway=True)
+        total = page.total if page.total is not None else len(page.rows)
+        got = {"total": total, "rows": page.rows, "partial": False, "dups": 0, "missing": 0,
+               "sample_capped": key_mode == "sample" and limit > want,
+               "ended": start - 1 + len(page.rows) >= total or len(page.rows) < want}
+        scan_offset = 0
     elif scanning:
         if key_mode == "sample":
             raise ToolError("SAMPLE_LIMIT", "지금은 체험 모드라 처음 5행만 받을 수 있어 조건 검색(where), 정렬, 집계를 할 수 없습니다.",
@@ -503,8 +514,13 @@ def dataset_query(a: dict) -> dict:
         matched = [r for r in rows if _match(r, where)]
         end = scan_offset + len(rows) + (got.get("missing") or 0)
         dups, missing = got.get("dups", 0), got.get("missing")
-        narrow = ("filters로 범위를 1,000행 이하로 좁히면 정확해집니다." if spec and spec["params"] else
-                  "이 데이터에는 서버 쪽 필터가 없어 좁힐 수 없습니다. 더 작은 단위의 데이터셋이 있는지 dataset_search로 찾아보세요.")
+        unused = [p_ for p_, v in zip(spec["params"], params) if v is None] if spec else []
+        if unused:
+            narrow = ("서버 쪽 필터(" + ", ".join(f"{p_['name']} {p_['description']}".strip() for p_ in unused[:4]) +
+                      ")로 1,000행 이하로 좁힐 수 있으면 정확해집니다. 좁힐 수 없으면 '약 …'으로 말하세요.")
+        else:
+            narrow = ("더 좁힐 서버 쪽 필터가 없습니다. '약 …'으로 말하고, 더 작은 단위(예: 자치구별)의 데이터셋이 있는지 "
+                      "dataset_search로 찾아보세요.")
         if got.get("changing"):
             notices.append(f"이 데이터는 받는 사이에 값이 바뀌어 전체 {total:,}행을 빠짐없이 한 번씩 받았는지 확인하지 못했습니다. "
                            "건수와 합계는 어림값이라고 말하세요. " + narrow)
@@ -538,8 +554,7 @@ def dataset_query(a: dict) -> dict:
                 merge += " 이 서비스는 행 순서가 호출마다 달라질 수 있어, 조각을 더한 값은 겹치거나 빠진 행이 있는 어림값입니다."
             if more:
                 notices.append(f"{whole} {scan_offset + 1:,}~{end:,}번째 {len(rows):,}건만 훑었습니다. 이 결과는 전체가 아닙니다. "
-                               f"{narrow.split('.')[0]}는 것이 가장 좋고, scan을 늘리거나(최대 {SCAN_MAX:,}) "
-                               f"scan_offset={end}로 이어 훑을 수 있습니다. " + merge)
+                               f"scan을 늘리거나(최대 {SCAN_MAX:,}) scan_offset을 {end}(으)로 주어 이어 훑을 수 있습니다. {narrow} " + merge)
             elif scan_offset:                             # 뒤 조각을 받았을 때만 '앞 조각과 합치라'고 한다
                 notices.append(f"{whole} {scan_offset + 1:,}~{end:,}번째를 훑은 마지막 조각입니다. "
                                "앞 조각의 결과와 합쳐야 전체가 됩니다. " + merge)
@@ -577,6 +592,8 @@ def dataset_query(a: dict) -> dict:
     if not scanning and offset and (total or 0) > sc.PAGE_MAX:
         notices.append("이 서비스는 행 순서가 호출마다 달라질 수 있어, offset으로 이어 받으면 같은 행이 다시 나오거나 빠질 수 있습니다. "
                        "빠짐없이 세거나 견주려면 where, sort, metrics를 쓰세요(서버가 겹침을 확인합니다).")
+    if service == "culturalEventInfo" and any(f in ("STRTDATE", "END_DATE") for f, _, _ in where):
+        notices.append("행사 기간이 겹치는 것만 골랐습니다. 그날 실제 공연 회차가 있는지는 ORG_LINK의 원문에서 확인하라고 전하세요.")
     if service == "GetParkingInfo":
         notices.append("시영주차장만 들어 있습니다(구영, 민영 제외). PRK_STTS_YN이 1이 아닌 곳의 NOW_PRK_VHCL_CNT 0은 "
                        "빈 주차장이 아니라 실시간 값이 없다는 뜻입니다.")
@@ -877,39 +894,77 @@ LINES = {"1001": "1호선", "1002": "2호선", "1003": "3호선", "1004": "4호�
          "1007": "7호선", "1008": "8호선", "1009": "9호선", "1032": "GTX-A", "1061": "중앙선", "1063": "경의중앙선",
          "1065": "공항철도", "1067": "경춘선", "1075": "수인분당선", "1077": "신분당선", "1081": "경강선",
          "1092": "우이신설선", "1093": "서해선", "1094": "신림선"}
+LINE_ALIASES = {"분당선": "수인분당선", "수인선": "수인분당선", "경의선": "경의중앙선", "공항선": "공항철도",
+                "gtx": "GTX-A", "gtxa": "GTX-A", "우이선": "우이신설선"}
 SUBWAY_SAMPLE_STATION = "서울"
-# 흔히 부르는 역 이름 → 서울시 표기. 실제 키로 확인한 것만 둔다 ('이수', '홍대'는 빈 결과가 온다)
-STATION_ALIASES = {"이수": "총신대입구(이수)", "총신대입구": "총신대입구(이수)", "홍대": "홍대입구"}
+STALE_SEC = 90               # 이보다 오래 갱신되지 않은 행은 이미 지나간 열차일 수 있다고 표시한다
+SUBWAY_TERMS = {
+    "status": "열차 위치를 서울시가 문장으로 적은 것. '전역'은 바로 앞 역, '[3]번째 전역'은 세 정거장 전",
+    "eta_sec": "as_of 기준 도착까지 남은 초. 0이거나 없으면 status의 문장을 따른다",
+    "eta_now_sec": "지금 기준으로 남은 초(eta_sec에서 정보가 갱신된 뒤 지난 시간을 뺀 값)",
+    "direction": "상행·하행, 2호선은 내선(시계 방향)·외선(반시계 방향). 사용자에게는 heading의 '○○방면'으로 말한다",
+    "heading": "행선지와 방면. 2호선은 순환선이라 행선지(예: 성수행)보다 방면이 정확하다",
+    "stations_away": "몇 정거장 전에 있는지. 0이면 이 역에 들어오는 중이거나 서 있다",
+    "last_train": "막차일 때만 true로 나온다. 없으면 막차가 아니다. 막차 시각표는 이 데이터에 없다",
+    "stale": "갱신된 지 90초가 넘어 이미 지나갔을 수 있는 행",
+}
 
 
-def _count_subway(add: int = 1) -> int:
-    """오늘 실시간 지하철 호출 수. 세션마다 서버가 따로 뜨므로 디스크에 센다."""
-    today = now_kst().strftime("%Y-%m-%d")
-    data = sc.disk_get("subway_calls.json", 3 * 24 * 3600)
-    n = (data.get(today, 0) if isinstance(data, dict) else 0) + add
-    if add:
-        sc.disk_set("subway_calls.json", {today: n})
-    return n
+def _count_subway(add: int = 0) -> int:
+    """오늘 실시간 지하철 호출 수 (세는 일은 Client.call이 한다)."""
+    return sc.count_subway(add)
 
 
 def _via_place(station: str) -> str:
     """실시간 지하철 키가 없어도, 그 역이 주요 장소 121곳 안에 있으면 place_now의 subway 섹션이 도착 정보를 준다."""
-    name, cands = places.resolve(station + "역")
+    base = station.split("(")[0]
+    name, cands = places.resolve(base + "역")
     if name and name.endswith("역"):
         return (f" 일반 인증키만 있다면 place_now {{\"place\": \"{name}\", \"sections\": [\"subway\"]}}로 "
                 "이 역 주변의 도착 정보를 볼 수 있습니다.")
-    near, more = places.resolve(station)
+    near, more = places.resolve(base)
     guess = near or (more[0] if more else (cands[0] if cands else None))
     return (" 일반 인증키만 있다면, 이 역이 주요 장소 121곳 중 한 곳의 주변 역일 때 place_now의 subway 섹션에 도착 정보가 나옵니다"
             + (f" (예: place_now {{\"place\": \"{guess}\", \"sections\": [\"subway\"]}})." if guess else "."))
 
 
+def _line_target(line: str) -> str:
+    t = re.sub(r"\s+", "", line)
+    if t.isdigit():
+        return f"{int(t)}호선"
+    return LINE_ALIASES.get(t.lower(), t)
+
+
+def _stations_away(r: dict) -> int:
+    """ordkey의 셋째~다섯째 글자가 '몇 정거장 전'이다 (예: 11001서동탄0 → 1). 읽지 못하면 뒤로 보낸다."""
+    m_ = re.match(r"^\d\d(\d{3})", str(r.get("ordkey") or ""))
+    return int(m_.group(1)) if m_ else 999
+
+
+def _fetch_station(c: sc.Client, api_name: str, sample: bool) -> list:
+    hit = c.cache.get(f"subway|{api_name}")
+    if hit is not None:
+        return hit
+    try:
+        page = c.call(SUBWAY, 0, sc.SAMPLE_MAX if sample else 50, [api_name], subway=True)
+    except SeoulError as e:
+        if e.code == "ERROR-336":
+            # 샘플 키는 서울역 말고는 무엇에나 이 코드를 준다. 실제 키에서 역 이름이 틀리면 INFO-200(빈 결과)이 온다.
+            raise ToolError("ERROR-336", f"서울시 지하철 서버가 '{api_name}'역 요청을 받아들이지 않았습니다 (ERROR-336).",
+                            "역 이름이 서울시 표기와 다를 수 있습니다. 이름이 맞다면 잠시 뒤 다시 시도하세요.") from None
+        if e.code in ("INFO-100", "ERROR-338"):
+            raise ToolError("SUBWAY_KEY_NEEDED", "실시간 지하철 인증키가 확인되지 않았습니다.",
+                            "실시간 지하철은 일반 인증키와 별도의 키를 씁니다. 열린데이터광장에서 '실시간 지하철 인증키'를 신청해 "
+                            "key_setup의 subway에 넣으세요." + _via_place(api_name)) from None
+        raise
+    return c.cache.set(f"subway|{api_name}", page.rows, 15)
+
+
 def subway_arrivals(a: dict) -> dict:
     c = client()
-    name = re.sub(r"\s+", "", a["station"])
-    if name.endswith("역") and len(name) > 2:
-        name = name[:-1]                                  # '서울역'으로 부르면 3건, '서울'로 부르면 20건이 온다. '역'을 떼야 전체가 온다
-    name = STATION_ALIASES.get(name, name)
+    asked = re.sub(r"\s+", "", a["station"])
+    names = stations.resolve(asked)
+    name = names[0]
     limit = min(max(a.get("limit", 20), 1), 50)
     sample = c.subway_key_mode == "sample"
     if sample and name != SUBWAY_SAMPLE_STATION:
@@ -922,66 +977,77 @@ def subway_arrivals(a: dict) -> dict:
                         + "실시간 지하철 인증키는 열린데이터광장의 같은 화면에서 따로 신청합니다(무료). 받은 키는 key_setup의 subway에 넣으세요."
                         + ("" if have_general else _via_place(name)),
                         requested=name, available=SUBWAY_SAMPLE_STATION)
-    raw = c.cache.get(f"subway|{name}")
-    if raw is None:
-        try:
-            page = c.call(SUBWAY, 0, sc.SAMPLE_MAX if sample else 50, [name], subway=True)
-        except SeoulError as e:
-            _count_subway()
-            if e.code == "ERROR-336":
-                # 샘플 키는 서울역 말고는 무엇에나 이 코드를 준다. 실제 지하철 키에서 역 이름이 틀렸을 때 무엇이 오는지는
-                # 확인하지 못했다. 그래서 '역 이름 오류'라고 단정하지 않고 가능성으로만 알린다.
-                raise ToolError("ERROR-336", f"서울시 지하철 서버가 '{name}'역 요청을 받아들이지 않았습니다 (ERROR-336).",
-                                "역 이름이 서울시 표기와 다를 수 있습니다. '역'을 뺀 공식 역명인지 확인하세요 "
-                                "(예: 서울, 강남, 홍대입구, 총신대입구(이수)). 이름이 맞다면 잠시 뒤 다시 시도하세요.") from None
-            if e.code in ("INFO-100", "ERROR-338"):
-                raise ToolError("SUBWAY_KEY_NEEDED", "실시간 지하철 인증키가 확인되지 않았습니다.",
-                                "실시간 지하철은 일반 인증키와 별도의 키를 씁니다. 열린데이터광장에서 '실시간 지하철 인증키'를 신청해 "
-                                "key_setup의 subway에 넣으세요." + _via_place(name)) from None
-            raise
-        _count_subway()
-        raw = c.cache.set(f"subway|{name}", page.rows, 15)
-    line, direction = str(a.get("line") or "").strip(), str(a.get("direction") or "").strip()
+    raw = []
+    for n in (names[:1] if sample else names):          # 서울역처럼 이름이 둘로 나뉜 역은 둘 다 부른다
+        raw += _fetch_station(c, n, sample)
+    line = _line_target(str(a.get("line") or "")) if a.get("line") else ""
+    direction = re.sub(r"\s+|순환", "", str(a.get("direction") or ""))
+    present: dict[str, set] = {}
     rows = []
     for r in raw:
         ln = LINES.get(str(r.get("subwayId")), str(r.get("subwayId")))
-        if line and line.replace("호선", "") not in ln:
+        present.setdefault(ln, set()).add(f"{r.get('updnLine')} {r.get('trainLineNm') or ''}".strip())
+        if line and ln != line:
             continue
-        if direction and direction not in str(r.get("updnLine", "")) and direction not in str(r.get("trainLineNm", "")):
+        if direction and direction not in str(r.get("updnLine", "")) and direction not in str(r.get("trainLineNm", "")) \
+                and direction not in str(r.get("btrainSttus", "")):
             continue
         eta = num(r.get("barvlDt"))
+        age = age_sec(str(r.get("recptnDt") or ""))
         rows.append(prune({"line": ln, "direction": r.get("updnLine"), "heading": r.get("trainLineNm"),
                            "status": r.get("arvlMsg2"), "train_at": r.get("arvlMsg3"),
-                           "eta_sec": int(eta) if eta else None, "destination": r.get("bstatnNm"),
-                           "train_type": r.get("btrainSttus"), "last_train": str(r.get("lstcarAt")) == "1" or None,
-                           "updated": r.get("recptnDt"), "age_sec": age_sec(str(r.get("recptnDt") or ""))}))
-    stale = [x for x in rows if (x.get("age_sec") or 0) > 300]
-    rows = [x for x in rows if (x.get("age_sec") or 0) <= 300]          # 5분 넘게 갱신이 없는 행은 이미 지나간 열차일 수 있어 뺀다
-    rows.sort(key=lambda x: (x.get("line", ""), x.get("direction", ""), x.get("eta_sec") or 10**6))
+                           "stations_away": _stations_away(r) if _stations_away(r) < 999 else None,
+                           "eta_sec": int(eta) if eta else None,
+                           "eta_now_sec": max(int(eta) - (age or 0), 0) if eta else None,
+                           "destination": r.get("bstatnNm"), "train_type": r.get("btrainSttus"),
+                           "last_train": str(r.get("lstcarAt")) == "1" or None,
+                           "updated": r.get("recptnDt"), "age_sec": age,
+                           "stale": (age or 0) > STALE_SEC or None}) | {"_rank": _stations_away(r)})
+    # 가까운 열차부터. 이 역에 들어오는 중이거나 서 있는 열차(0정거장)가 맨 앞이다. 같은 거리면 남은 시간 순
+    rows.sort(key=lambda x: (x["line"], x.get("direction", ""), bool(x.get("stale")), x["_rank"], x.get("eta_sec") or 0))
+    for x in rows:
+        del x["_rank"]
     notices = []
     stamps = [x["updated"] for x in rows if x.get("updated")]
-    if stamps:
-        notices.append(f"{max(stamps)} 기준 실시간 도착 정보입니다. eta_sec가 없는 행은 status의 문장(도착, 출발, 전역 진입 등)이 전부입니다.")
+    now = f"{now_kst():%Y-%m-%d %H:%M:%S}"
+    as_of = min(max(stamps), now) if stamps else None     # 일부 노선은 갱신 시각이 몇 분 앞서 찍혀 온다. 지금을 넘기지 않는다
+    if as_of:
+        notices.append(f"{as_of} 기준 실시간 도착 정보입니다. 행은 노선과 방향별로 가까운 열차부터 놓았습니다. "
+                       "남은 시간은 eta_now_sec(지금 기준)를, 없으면 status의 문장을 따르세요.")
+    stale = sum(1 for x in rows if x.get("stale"))
     if stale:
-        notices.append(f"5분 넘게 갱신되지 않은 {len(stale)}건은 이미 지나간 열차일 수 있어 뺐습니다.")
+        notices.append(f"{stale}건은 갱신된 지 90초가 넘어 이미 지나갔을 수 있습니다(stale 표시, 같은 방향에서 뒤로 보냈습니다). "
+                       "종착역에서 대기 중인 열차일 수도 있습니다.")
+    if line == "2호선" or any(x["line"] == "2호선" for x in rows[:limit]):
+        notices.append("2호선은 순환선이라 양방향 열차의 행선지가 같을 수 있습니다. 행선지보다 heading의 '○○방면'으로 말하세요.")
     if sample and not rows:
-        notices.append("실시간 지하철 인증키가 없어 이 역의 도착 정보 중 앞 5건만 받았습니다. 그 안에 조건에 맞는(또는 아직 지나가지 않은) "
+        notices.append("실시간 지하철 인증키가 없어 이 역의 도착 정보 중 앞 5건만 받았습니다. 그 안에 조건에 맞는 "
                        "열차가 없었을 뿐, 열차가 없다는 뜻이 아닙니다. 실시간 지하철 인증키를 넣으면 전체를 봅니다.")
     elif not raw:
-        notices.append(f"'{name}'역의 도착 정보가 비어 있습니다. 운행 시간이 아니거나 역 이름이 서울시 표기와 다를 수 있습니다. "
-                       "'역'을 뺀 공식 역명인지 확인하세요 (예: 홍대입구, 총신대입구(이수)).")
+        sug = [x for x in stations.suggest(asked) if x not in names]
+        notices.append(f"'{name}'역의 도착 정보가 비어 있습니다. 운행 시간이 아니거나 역 이름이 서울시 표기와 다를 수 있습니다."
+                       + (f" 비슷한 이름: {', '.join(sug)}. 이 중 하나로 다시 부르세요." if sug else
+                          " '역'을 뺀 공식 역명인지 확인하세요."))
     elif not rows:
-        notices.append(f"이 역의 도착 정보 {len(raw)}건 중 line, direction 조건에 맞는 열차가 없습니다. 조건을 빼고 다시 보세요.")
+        have = "; ".join(f"{ln}({', '.join(sorted(d))})" for ln, d in sorted(present.items()))
+        notices.append(f"이 역의 도착 정보 {len(raw)}건 중 line, direction 조건에 맞는 열차가 없습니다. 지금 이 역에 있는 것: {have}. "
+                       "이 중 하나로 다시 부르세요. 행선지가 바뀐 노선도 있습니다(예: 4호선 당고개행은 진접·불암산행으로 운행).")
     elif sample:
         notices.append("실시간 지하철 인증키가 없어 앞 5건만 받았습니다. 이 역의 열차가 더 있을 수 있습니다. 키를 넣으면 전체가 나옵니다.")
-    used = _count_subway(0)
+    if len(rows) > limit:
+        notices.append(f"{len(rows)}건 중 가까운 {limit}건만 실었습니다. line이나 direction으로 좁히면 나머지를 볼 수 있습니다.")
+    if any(x.get("last_train") for x in rows[:limit]):
+        notices.append("last_train 표시가 있는 열차는 그 방향의 막차입니다.")
+    used = _count_subway()
     if used >= SUBWAY_DAILY * 0.8:
-        notices.append(f"오늘 실시간 지하철 호출이 {used}건입니다. 하루 한도는 {SUBWAY_DAILY:,}건입니다.")
+        notices.append(f"오늘 실시간 지하철 호출이 {used}건입니다. 하루 한도는 {SUBWAY_DAILY:,}건이고, 넘으면 서울시 서버가 요청을 거절합니다.")
     total = len(rows)
-    return {"meta": {"station": name, "total": total, "returned": min(total, limit), "as_of": max(stamps) if stamps else None,
-                     "key_mode": c.subway_key_mode, "source_url": catalog.VIEW_URL.format(id="OA-12764"),
-                     "units": {"eta_sec": "도착까지 남은 초(없으면 status 문장을 보세요)", "age_sec": "정보가 갱신된 뒤 지난 초"}},
-            "notices": notices, "rows": rows[:limit]}
+    meta = {"station": " + ".join(names) if len(names) > 1 and not sample else name, "total": total,
+            "returned": min(total, limit), "as_of": as_of, "key_mode": c.subway_key_mode,
+            "source_url": catalog.VIEW_URL.format(id="OA-12764"), "units": SUBWAY_TERMS}
+    if asked.removesuffix("역") not in names and asked not in names:
+        meta["station_note"] = f"'{asked}'을(를) API 이름 '{' + '.join(names)}'(으)로 불렀습니다."
+    return {"meta": meta, "notices": notices, "rows": rows[:limit]}
 
 
 # ── bike_stations ──────────────────────────────────────────────────────────
@@ -1497,7 +1563,8 @@ def selftest(full: bool = False) -> int:
          lambda b, e: not e and b["rows"][0]["population"]["AREA_CONGEST_LVL"] and b["meta"]["as_of"]),
         ("다른 장소", "place_now", {"place": "성수동", "sections": ["population"]},
          code("SAMPLE_PLACE_ONLY") if sample else (lambda b, e: not e and b["rows"][0]["place"] == "성수카페거리")),
-        ("지하철 도착", "subway_arrivals", {"station": "서울역"}, lambda b, e: not e and b["meta"]["station"] == "서울"),
+        ("지하철 도착", "subway_arrivals", {"station": "서울역"},
+         lambda b, e: not e and b["meta"]["station"] in ("서울", "서울 + 서울역") and b["rows"]),
         ("지하철 다른 역", "subway_arrivals", {"station": "강남"}, code("SAMPLE_STATION_ONLY") if sub_sample else ok),
         ("따릉이", "bike_stations", {"query": "망원"},
          code("SAMPLE_LIMIT") if sample else (lambda b, e: not e and b["meta"]["stations_searched"] > 1000)),

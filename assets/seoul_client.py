@@ -181,10 +181,45 @@ def disk_set(name: str, value: Any) -> None:
         pass                                      # 캐시는 없어도 동작한다
 
 
+def count_subway(add: int = 0) -> int:
+    """오늘(서울 시각) 실시간 지하철 호출 수. 세션마다 서버가 따로 뜨므로 디스크에 센다."""
+    import datetime as _dt
+    today = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=9)).strftime("%Y-%m-%d")
+    data = disk_get("subway_calls.json", 3 * 24 * 3600)
+    n = (data.get(today, 0) if isinstance(data, dict) else 0) + add
+    if add:
+        disk_set("subway_calls.json", {today: n})
+    return n
+
+
 # ── HTTP ───────────────────────────────────────────────────────────────────
 
 def http_fetch(url: str, data: dict | None = None, timeout: float = 15, retries: int = 1,
                secrets: tuple = (), deadline: float | None = None) -> bytes:
+    """기한이 있으면 별도 스레드에서 받아, 헤더가 한 줄씩 늦게 와도 기한에 끊는다."""
+    if deadline is None:
+        return _http_fetch(url, data, timeout, retries, secrets, None)
+    import threading
+    box: dict = {}
+
+    def run() -> None:
+        try:
+            box["ok"] = _http_fetch(url, data, timeout, retries, secrets, deadline)
+        except BaseException as e:               # noqa: BLE001  (스레드 밖으로 그대로 넘긴다)
+            box["err"] = e
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(max(deadline - time.time(), 0) + 0.5)
+    if t.is_alive():
+        raise SeoulError("NETWORK", "서울시 서버에 연결하지 못했습니다: 시간 한도를 넘겼습니다",
+                         "네트워크 상태를 확인하고 잠시 뒤 다시 시도하세요. 서울시 서버 점검 시간일 수 있습니다.")
+    if "err" in box:
+        raise box["err"]
+    return box["ok"]
+
+
+def _http_fetch(url: str, data: dict | None, timeout: float, retries: int,
+                secrets: tuple, deadline: float | None) -> bytes:
     """GET 또는 POST. 네트워크 오류와 5xx는 한 번 더 해 본다. 오류 문장에서 키를 가린다.
 
     deadline(시각)이 있으면 남은 시간 안에서만 기다린다. 도구 하나가 기한을 넘겨 붙잡히지 않게 한다.
@@ -236,7 +271,7 @@ def build_url(key: str, service: str, start: int, end: int, params: list | tuple
     params = list(params)
     while params and (params[-1] is None or not str(params[-1]).strip()):
         params.pop()                              # 끝의 빈 인자는 붙이지 않는다
-    parts = [base, urllib.parse.quote(key, safe=""), "json", urllib.parse.quote(service, safe=""),
+    parts = [base, urllib.parse.quote(key, safe=""), "json", urllib.parse.quote(service, safe="/"),   # realtimeStationArrival/ALL
              str(int(start)), str(int(end))] + [_seg(p) for p in params]
     return "/".join(parts) + ("/" if not params else "")
 
@@ -321,6 +356,8 @@ class Client:
         """한 번 호출한다. INFO-000과 INFO-200(데이터 없음)은 정상, 나머지 코드는 SeoulError."""
         key, base = (self.subway_key, SUBWAY_BASE) if subway else (self.key, BASE)
         url = build_url(key, service, start, end, params, base)
+        if subway and key != SAMPLE_KEY:
+            count_subway(1)                       # 하루 1,000건 한도. 실패한 호출도 한도를 쓰므로 보내기 전에 센다
         try:
             parsed = parse(self._fetch(url, secrets=(self.key, self.subway_key), deadline=self.deadline))
         except SeoulError as e:
