@@ -206,6 +206,14 @@ seoul-data/
 
 ## 버전 기록
 
+### 1.0.0 (2026-11-15)
+
+첫 정식 버전입니다. 0.1.1과 기능은 같습니다.
+
+- 도구 7개(`place_now`, `subway_arrivals`, `bike_stations`, `dataset_search`, `dataset_describe`, `dataset_query`, `key_setup`)
+- 일반 인증키와 실시간 지하철 인증키로 모든 도구를 실제 호출해 검증했습니다.
+- 공개 전 네 가지 관점(논리, 분야 전문성, 사용자 경험, 실사용)의 검토를 여섯 차례 거쳤습니다. 기록은 [DESIGN.md](DESIGN.md)에 있습니다.
+
 ### 0.1.1 (2026-11-15)
 
 실시간 지하철 인증키로 실제 동작을 확인하고 고쳤습니다.

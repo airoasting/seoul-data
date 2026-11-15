@@ -5,7 +5,7 @@
 - 이름. `seoul-data` (플러그인, MCP 서버, 스킬 이름을 하나로 쓴다. `dart`, `edgar`와 같은 규칙이다)
 - 분류. AI-Native Market Tools 축의 Prototype. 실제 키로 한 달 써 본 뒤 Core Asset 승격을 판단한다.
 - 쓰는 사람. Claude를 쓰는 지식 노동자, 그리고 도구를 고르고 부르는 모델 자신.
-- 상태. 0.1.1. 실제 일반 인증키와 실시간 지하철 인증키로 검증했다. 공개 저장소 github.com/airoasting/seoul-data.
+- 상태. 1.0.0 (2026-11-15). 실제 일반 인증키와 실시간 지하철 인증키로 검증했다. 공개 저장소 github.com/airoasting/seoul-data.
 
 ## 1. 왜 만드는가
 

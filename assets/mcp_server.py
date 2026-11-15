@@ -36,7 +36,7 @@ import stations                                                  # noqa: E402
 import seoul_client as sc                                        # noqa: E402
 from seoul_client import SeoulError                              # noqa: E402
 
-SERVER = {"name": "seoul-data", "version": "0.1.1"}
+SERVER = {"name": "seoul-data", "version": "1.0.0"}
 PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 MAX_CHARS = 40_000     # 응답 JSON 글자 수 상한. 클라이언트가 큰 응답을 자르기 전에 서버가 먼저 줄이고 알리려는 값이다.
                        # dart 서버에서 써 온 경험값이고, 4만 자가 몇 토큰인지는 재지 않았다.

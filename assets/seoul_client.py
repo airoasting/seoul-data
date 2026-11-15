@@ -32,7 +32,7 @@ SITE = "https://data.seoul.go.kr"
 SAMPLE_KEY = "sample"
 SAMPLE_MAX = 5          # 샘플 키는 1~5행만 준다 (ERROR-335)
 PAGE_MAX = 1000         # 한 번에 최대 1,000행 (ERROR-336)
-USER_AGENT = "seoul-data-mcp/0.1 (+https://data.seoul.go.kr)"
+USER_AGENT = "seoul-data-mcp/1.0 (+https://data.seoul.go.kr)"
 KEY_GUIDE = ("인증키는 https://data.seoul.go.kr 에서 로그인 후 '인증키 신청'으로 무료 발급됩니다. "
              "받은 키를 ~/.config/seoul-data/.env 파일에 SEOUL_API_KEY=키 한 줄로 넣으세요.")
 
