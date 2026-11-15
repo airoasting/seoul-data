@@ -109,4 +109,4 @@ description: 서울 열린데이터광장(data.seoul.go.kr) 공공데이터를 s
 - 길찾기, 소요 시간, 요금 계산은 하지 않는다.
 - 응답에 없는 숫자를 만들어 내지 않는다. 데이터가 없으면 없다고 말한다.
 
-서울시 API의 세부 동작은 [references/api-notes.md](references/api-notes.md)에 있다.
+서울시 API의 세부 동작은 [references/api-notes.md](../../references/api-notes.md)에 있다.

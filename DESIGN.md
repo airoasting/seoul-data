@@ -135,8 +135,10 @@
 
 ```
 seoul-data/
-├── .claude-plugin/plugin.json     플러그인 등록 (mcpServers.seoul-data)
-├── SKILL.md                       언제 어떤 도구를 쓰는지
+├── .claude-plugin/plugin.json     Claude Code 플러그인 등록 (mcpServers.seoul-data)
+├── .codex-plugin/plugin.json      Codex 플러그인 등록 (skills, mcpServers 경로)
+├── codex.mcp.json                 Codex용 MCP 선언 (cwd를 플러그인 루트로, 상대 경로)
+├── skills/seoul-data/SKILL.md     언제 어떤 도구를 쓰는지
 ├── README.md                      설치, 키 발급, 예시, 한계
 ├── DESIGN.md                      이 문서
 ├── assets/
@@ -235,7 +237,7 @@ seoul-data/
 
 3차 지적을 반영한 뒤의 점수는 다시 받지 않았다. 반영 결과는 단위 테스트 109건과 실제 키 점검으로 확인했다.
 
-남은 것. 자치구 25곳을 한 번에 집계하는 일은 여전히 여러 번 불러야 한다. 열이 많은 데이터는 한 호출에 3만 행 안팎까지다. 플러그인으로 설치했을 때 루트의 `SKILL.md`가 스킬로 잡히는지는 `dart`와 같은 구성이라는 것 외에 따로 확인하지 않았다.
+남은 것. 자치구 25곳을 한 번에 집계하는 일은 여전히 여러 번 불러야 한다. 열이 많은 데이터는 한 호출에 3만 행 안팎까지다. 스킬 본문은 `skills/seoul-data/SKILL.md`에 둔다(2026-11-15). Codex(codex-cli 0.159.3)는 플러그인 루트의 `SKILL.md`를 스킬로 잡지 않고 `skills/<이름>/SKILL.md`만 잡는다. Claude Code는 두 위치를 다 읽는다. Codex는 Claude 형식 매니페스트의 `${CLAUDE_PLUGIN_ROOT}`를 풀지 않으므로, MCP는 `.codex-plugin/plugin.json`이 가리키는 `codex.mcp.json`에 `cwd`와 상대 경로로 따로 선언한다. 버전은 두 매니페스트에 같은 값을 적고 단위 테스트가 일치를 확인한다. 격리된 설정 폴더에서 두 도구 모두 설치, 스킬 인식, MCP 등록까지 확인했고, 로그인된 Codex 세션에서 도구를 실제로 부르는 것은 확인하지 않았다.
 
 ### 4차. 3차 반영분 채점 (실제 인증키로)
 

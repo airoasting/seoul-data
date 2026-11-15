@@ -45,6 +45,16 @@ Claude Code 플러그인으로 설치합니다.
 /plugin install seoul-data@airoasting
 ```
 
+Codex 플러그인으로 설치합니다.
+
+```bash
+codex plugin marketplace add airoasting/skills
+```
+
+```bash
+codex plugin add seoul-data@airoasting
+```
+
 또는 저장소를 내려받은 뒤 MCP 서버만 등록합니다. 경로는 내려받은 위치에 맞게 바꿉니다.
 
 ```bash
@@ -55,7 +65,7 @@ git clone https://github.com/airoasting/seoul-data.git
 claude mcp add seoul-data -- python3 "/내려받은/위치/seoul-data/assets/mcp_server.py"
 ```
 
-Claude 데스크톱 앱과 Codex는 설정 파일에 같은 명령(`python3`, `assets/mcp_server.py`의 전체 경로)을 MCP 서버로 등록하면 됩니다.
+Claude 데스크톱 앱은(Codex에서 플러그인을 쓰지 않을 때도) 설정 파일에 같은 명령(`python3`, `assets/mcp_server.py`의 전체 경로)을 MCP 서버로 등록하면 됩니다.
 
 </details>
 

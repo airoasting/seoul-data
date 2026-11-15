@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "seoul-data": {
+      "command": "python3",
+      "args": [
+        "assets/mcp_server.py"
+      ],
+      "cwd": "."
+    }
+  }
+}

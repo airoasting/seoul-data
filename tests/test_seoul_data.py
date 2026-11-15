@@ -1417,5 +1417,26 @@ class RoundFourTest(Base):
         self.assertFalse(any("주차장, 정류소" in n for n in b["notices"]))
 
 
+class PluginLayoutTest(unittest.TestCase):
+    """Claude Code와 Codex가 같은 저장소를 플러그인으로 읽는다. 두 매니페스트가 어긋나면 한쪽만 깨진다."""
+
+    def test_manifests_agree(self):
+        claude = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        codex = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        for key in ("name", "version", "description"):
+            self.assertEqual(claude[key], codex[key], key)
+
+    def test_codex_paths_exist(self):
+        codex = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        self.assertTrue((ROOT / codex["skills"] / "seoul-data" / "SKILL.md").is_file())
+        mcp = json.loads((ROOT / codex["mcpServers"]).read_text(encoding="utf-8"))
+        server = mcp["mcpServers"]["seoul-data"]
+        self.assertEqual(server["cwd"], ".")           # Codex는 ${CLAUDE_PLUGIN_ROOT}를 풀지 않는다
+        self.assertTrue((ROOT / server["args"][0]).is_file())
+
+    def test_no_root_skill(self):
+        self.assertFalse((ROOT / "SKILL.md").exists())  # 본문이 두 벌이 되지 않게 한다
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
