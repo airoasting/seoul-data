@@ -1,8 +1,8 @@
 # seoul-data
 
-![seoul-data, 서울 열린데이터광장 MCP 서버](assets/thumbnail.png)
+![seoul-data, 서울 열린데이터광장 MCP 서버](assets/thumbnail-v1.png)
 
-> "지금 성수동 붐벼?", "마포구 아파트 올해 평균 얼마야?"라고 Claude에게 물으면 서울시 공공데이터로 답합니다.
+> "지금 성수동 붐벼?", "마포구 아파트 올해 평균 얼마야?"라고 Claude나 Codex에 물으면 서울시 공공데이터로 답합니다.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -194,7 +194,7 @@ seoul-data/
 │   ├── catalog.py               검색 화면과 명세 화면 파서
 │   ├── places.py                장소 121곳과 이름 해석
 │   ├── stations.py              실시간 지하철 API의 역 이름 561개
-│   └── thumbnail.html, .png
+│   └── thumbnail.html, thumbnail-v1.png
 ├── references/
 │   ├── api-notes.md             서울시 API 실측 노트와 재현 명령
 │   └── coverage.md              적용 범위 측정 결과
